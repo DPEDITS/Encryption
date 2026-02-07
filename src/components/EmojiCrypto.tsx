@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Lock, Unlock, Copy, Share2, Trash2, CheckCircle,
-    Key, Eye, EyeOff, Ghost, Shield, Zap, History, Link as LinkIcon
+    KeyRound, Eye, EyeOff, Ghost, Shield, Zap, Link as LinkIcon
 } from 'lucide-react';
 import { encrypt, decrypt, calculateSecurityMetrics } from '../utils/cipher';
 import { hideInStealth, extractFromStealth, encodeInvisible, decodeInvisible } from '../utils/steganography';
@@ -19,7 +19,6 @@ const EmojiCrypto: React.FC = () => {
     const [copied, setCopied] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
     const [metrics, setMetrics] = useState<any>(null);
-    const [history, setHistory] = useState<{ in: string, out: string, mode: Mode }[]>([]);
 
     // Initialize from URL
     useEffect(() => {
@@ -62,10 +61,6 @@ const EmojiCrypto: React.FC = () => {
     const handleCopy = () => {
         navigator.clipboard.writeText(output);
         setCopied(true);
-        if (output && activeTab === 'encrypt') {
-            const newHistory = [{ in: input, out: output, mode }, ...history].slice(0, 10);
-            setHistory(newHistory);
-        }
         setTimeout(() => setCopied(false), 2000);
     };
 
