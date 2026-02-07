@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Lock, Unlock, Copy, Share2, Trash2, CheckCircle,
-    KeyRound, Eye, EyeOff, Ghost, Shield, Zap, Link as LinkIcon
+    Eye, EyeOff, Ghost, Shield, Zap, Link as LinkIcon, History as HistoryIcon, LogOut
 } from 'lucide-react';
 import { encrypt, decrypt, calculateSecurityMetrics } from '../utils/cipher';
 import { hideInStealth, extractFromStealth, encodeInvisible, decodeInvisible } from '../utils/steganography';
+import { toBase64, fromBase64, encryptData, decryptData } from '../utils/auth';
+import AuthOverlay from './AuthOverlay';
 
 type Mode = 'emoji' | 'stealth' | 'invisible';
+
+interface HistoryItem { in: string, out: string, mode: Mode }
 
 const EmojiCrypto: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'encrypt' | 'decrypt'>('encrypt');
@@ -19,6 +23,12 @@ const EmojiCrypto: React.FC = () => {
     const [copied, setCopied] = useState(false);
     const [linkCopied, setLinkCopied] = useState(false);
     const [metrics, setMetrics] = useState<any>(null);
+    const [isInitialized, setIsInitialized] = useState(false);
+
+    // Auth & Vault State
+    const [masterKey, setMasterKey] = useState<CryptoKey | null>(null);
+    const [history, setHistory] = useState<HistoryItem[]>([]);
+    const [isLocked, setIsLocked] = useState(true);
 
     // Initialize from URL
     useEffect(() => {
@@ -30,13 +40,48 @@ const EmojiCrypto: React.FC = () => {
         if (urlData) {
             setMode(urlMode || 'emoji');
             setActiveTab('decrypt');
-            setInput(decodeURIComponent(urlData));
-            if (urlKey) setKey(decodeURIComponent(urlKey));
+            try {
+                setInput(fromBase64(urlData));
+                if (urlKey) setKey(fromBase64(urlKey));
+            } catch (e) {
+                console.error("Failed to decode URL link", e);
+            }
         }
+        setIsInitialized(true);
     }, []);
+
+    // Load History when authenticated
+    useEffect(() => {
+        if (masterKey) {
+            const loadHistory = async () => {
+                const stored = localStorage.getItem('ENCRYPT_VAULT_DATA');
+                if (stored) {
+                    try {
+                        const decrypted = await decryptData(stored, masterKey);
+                        setHistory(JSON.parse(decrypted));
+                    } catch (e) {
+                        console.error("Failed to decrypt vault", e);
+                    }
+                }
+            };
+            loadHistory();
+        }
+    }, [masterKey]);
+
+    // Save History when changed
+    useEffect(() => {
+        if (masterKey && history.length > 0) {
+            const saveHistory = async () => {
+                const encrypted = await encryptData(JSON.stringify(history), masterKey);
+                localStorage.setItem('ENCRYPT_VAULT_DATA', encrypted);
+            };
+            saveHistory();
+        }
+    }, [history, masterKey]);
 
     // Process data based on mode and tab
     useEffect(() => {
+        if (!isInitialized) return;
         if (!input) {
             setOutput('');
             setMetrics(null);
@@ -56,11 +101,17 @@ const EmojiCrypto: React.FC = () => {
             else if (mode === 'invisible') res = decodeInvisible(input);
         }
         setOutput(res);
-    }, [input, key, activeTab, mode]);
+    }, [input, key, activeTab, mode, isInitialized]);
 
     const handleCopy = () => {
         navigator.clipboard.writeText(output);
         setCopied(true);
+
+        if (output && activeTab === 'encrypt' && masterKey) {
+            const newItem: HistoryItem = { in: input, out: output, mode };
+            setHistory(prev => [newItem, ...prev].slice(0, 10));
+        }
+
         setTimeout(() => setCopied(false), 2000);
     };
 
@@ -68,8 +119,8 @@ const EmojiCrypto: React.FC = () => {
         const baseUrl = window.location.origin + window.location.pathname;
         const params = new URLSearchParams();
         params.set('m', mode);
-        params.set('d', encodeURIComponent(output));
-        if (key) params.set('k', encodeURIComponent(key));
+        params.set('d', toBase64(output));
+        if (key) params.set('k', toBase64(key));
 
         const shareUrl = `${baseUrl}?${params.toString()}`;
         navigator.clipboard.writeText(shareUrl);
@@ -86,9 +137,17 @@ const EmojiCrypto: React.FC = () => {
     const handleClear = () => {
         setInput('');
         setOutput('');
-        // Clear URL params
         window.history.replaceState({}, '', window.location.pathname);
     };
+
+    const handleLock = () => {
+        setMasterKey(null);
+        setIsLocked(true);
+    };
+
+    if (isLocked) {
+        return <AuthOverlay onAuthenticated={(k) => { setMasterKey(k); setIsLocked(false); }} />;
+    }
 
     return (
         <div style={{ maxWidth: '1000px', margin: '2rem auto', padding: '0 1rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
@@ -288,9 +347,14 @@ const EmojiCrypto: React.FC = () => {
                     </div>
                 </div>
 
-                <div style={{ padding: '0.8rem 1.5rem', background: 'rgba(0,0,0,0.2)', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}>
+                <div style={{ padding: '0.8rem 1.5rem', background: 'rgba(0,0,0,0.2)', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Mode: {mode.toUpperCase()}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Zap size={12} color="var(--primary)" /> Production Mode</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><Zap size={12} color="var(--primary)" /> Production Mode</span>
+                        <button onClick={handleLock} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                            <LogOut size={12} /> Lock
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -317,6 +381,24 @@ const EmojiCrypto: React.FC = () => {
                         </div>
                     </div>
                 )}
+
+                <div className="glass" style={{ borderRadius: '20px', padding: '1.5rem' }}>
+                    <h3 style={{ fontSize: '1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <HistoryIcon size={18} color="var(--primary)" /> Encrypted Vault
+                    </h3>
+                    {history.length === 0 ? (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>No history yet.</p>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                            {history.map((item, i) => (
+                                <div key={i} style={{ padding: '0.8rem', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <div style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>{item.mode.toUpperCase()}</div>
+                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.in}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
 
                 {/* Info Box */}
                 <div className="glass" style={{ borderRadius: '20px', padding: '1.5rem' }}>
